@@ -1,0 +1,6 @@
+@CastMe.UserApi_HostAddress = http://localhost:5128
+
+GET {{CastMe.UserApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
