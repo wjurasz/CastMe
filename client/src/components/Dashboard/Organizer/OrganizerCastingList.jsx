@@ -1,12 +1,13 @@
 // src/components/Dashboard/Organizer/OrganizerCastingList.jsx
 import { useEffect, useMemo, useState } from "react";
 import Card from "../../UI/Card";
-import { Calendar, MapPin, Users } from "lucide-react";
+import { Calendar, MapPin, Users, Banknote } from "lucide-react";
 import { BannerImage, BannerPlaceholder } from "../../UI/BannerImage";
 import { apiFetch } from "../../../utils/api";
 import Modal from "../../UI/Modal";
 import Button from "../../UI/Button";
 import { useToast } from "../../../context/ToastProvider";
+import EditCastingForm from "./EditCastingForm";
 
 const roleDisplayMap = {
   Model: "Model",
@@ -51,13 +52,30 @@ function getTotalFromStats(stats) {
   return p + a + r;
 }
 
+// czy wydarzenie już minęło
+const isPastEvent = (iso) => {
+  const d = parseApiDate(iso);
+  if (!d) return false;
+  return d.getTime() < Date.now();
+};
+
+// role -> minimalny payload do API (zakładamy role po EN)
+const roleNormalize = (roles) =>
+  (Array.isArray(roles) ? roles : [])
+    .filter((r) => r?.role)
+    .map((r) => ({
+      role: r.role,
+      capacity: Number(r.capacity) || 0,
+    }));
+
 function OrganizerCastingCard({
   casting,
   bannerUrl,
   selected,
   onSelect, // otwiera ParticipantsModal
   totalApplicantsOverride,
-  onDeleted, // po udanym DELETE
+  onDeleted, // po udanym DELETE/PUT -> refetch u rodzica
+  onBannerRefresh, // callback: fetchBannerFor
 }) {
   const { show: toast } = useToast();
 
@@ -71,7 +89,10 @@ function OrganizerCastingCard({
     casting?.applicantsCount ??
     0;
 
-  const status = (casting?.status || "Active").toString();
+  const rawStatus = (casting?.status || "Active").toString();
+  // ✅ jeżeli data minęła – pokazujemy Zamknięty (bez czekania na API)
+  const status = isPastEvent(casting?.eventDate) ? "Closed" : rawStatus;
+
   const statusCfg =
     status === "Active"
       ? { text: "Aktywny", cls: "bg-green-100 text-green-800" }
@@ -86,6 +107,9 @@ function OrganizerCastingCard({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
 
+  // Modal edycji
+  const [editOpen, setEditOpen] = useState(false);
+
   const openDeleteConfirm = (e) => {
     e?.stopPropagation?.();
     setDeleteError(null);
@@ -93,20 +117,18 @@ function OrganizerCastingCard({
   };
 
   const handleDelete = async () => {
-    // Start usuwania – zamykamy modal od razu, żeby nie blokował scrolla/focusu
     setDeleting(true);
     setDeleteError(null);
     setConfirmOpen(false);
     try {
       await apiFetch(`/casting/casting/${casting.id}`, { method: "DELETE" });
-      // trzymaj loader/blur na karcie 1.5s
+      // pokaż loader 1.5s dla lepszego UX
       setTimeout(() => {
-        onDeleted?.(casting); // rodzic zrobi refetch
+        onDeleted?.(casting);
         toast("Casting usunięty.", "success");
-        setDeleting(false); // karta i tak zwykle się odmontuje po refetchu
+        setDeleting(false);
       }, 1500);
     } catch (err) {
-      // Błąd – pokaż modal z komunikatem (przywracamy modal)
       setDeleting(false);
       setDeleteError(err?.message || "Nie udało się usunąć castingu.");
       setConfirmOpen(true);
@@ -114,13 +136,45 @@ function OrganizerCastingCard({
     }
   };
 
+  // ✅ Deduplikacja ról w WIDOKU (nie zmienia stanu/serwera)
+  const rolesForView = useMemo(() => {
+    const raw = Array.isArray(casting?.roles) ? casting.roles : [];
+    const seen = new Set();
+    const out = [];
+    for (const r of raw) {
+      const key = r?.role;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        role: key,
+        capacity: r?.capacity ?? 0,
+        acceptedCount:
+          typeof r?.acceptedCount === "number"
+            ? r.acceptedCount
+            : typeof r?.accepted === "number"
+            ? r.accepted
+            : 0,
+      });
+    }
+    // Model pierwszy (jeśli występuje)
+    const idx = out.findIndex((x) => x.role === "Model");
+    if (idx > 0) {
+      const [m] = out.splice(idx, 1);
+      out.unshift(m);
+    }
+    return out;
+  }, [casting?.roles]);
+
+  const compensationText = String(casting?.compensation ?? "").trim();
+  const hasCompensation = compensationText !== "" && compensationText !== "0";
+
   return (
     <div
       className={[
         "relative",
         "border rounded-lg p-4 transition-colors outline-none",
         "hover:bg-gray-50",
-        // ✅ ZAZNACZENIE: bez jasnoczerwonego tła i bez ringa — tylko border
+        // bez czerwonego tła: tylko border przy zaznaczeniu
         selected ? "border-[#EA1A62]" : "border-gray-200",
       ].join(" ")}
     >
@@ -136,7 +190,7 @@ function OrganizerCastingCard({
         }}
         className={[
           deleting ? "blur-[2px] pointer-events-none select-none" : "",
-          "cursor-pointer", // ✅ pointer na całym klikalnym obszarze
+          "cursor-pointer",
         ].join(" ")}
       >
         <div className="w-full mb-3">
@@ -151,7 +205,7 @@ function OrganizerCastingCard({
           )}
         </div>
 
-        <h3 className="font-medium text-gray-900 mb-2"> {casting.title} </h3>
+        <h3 className="font-medium text-gray-900 mb-2">{casting.title}</h3>
 
         <div className="flex flex-wrap gap-4 text-sm text-gray-600 mb-2">
           <div className="flex items-center">
@@ -162,27 +216,25 @@ function OrganizerCastingCard({
             <Calendar className="w-4 h-4 mr-1" />
             {formatDateTime(casting.eventDate)}
           </div>
+          {hasCompensation && (
+            <div className="flex items-center">
+              <Banknote className="w-4 h-4 mr-1" />
+              {compensationText}
+            </div>
+          )}
         </div>
 
-        {/* Liczniki ról */}
+        {/* Liczniki ról (z deduplikacją) */}
         <div className="flex flex-wrap gap-3 mb-2">
-          {casting.roles?.map((role, idx) => {
+          {rolesForView.map((role, idx) => {
             const roleKey = role?.role;
             const display = roleDisplayMap[roleKey] || roleKey || "Rola";
-            const fromRole =
-              typeof role?.acceptedCount === "number"
-                ? role.acceptedCount
-                : null;
-            const fromStats =
-              typeof casting?.stats?.acceptedByRole?.[roleKey] === "number"
-                ? casting.stats.acceptedByRole[roleKey]
-                : null;
-            const accepted = fromRole ?? fromStats ?? 0;
+            const accepted = role?.acceptedCount ?? 0;
             const capacity = role?.capacity ?? 0;
 
             return (
               <span
-                key={idx}
+                key={`${roleKey}-${idx}`}
                 className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded-full"
                 title={`${display}: ${accepted}/${capacity}`}
               >
@@ -224,8 +276,7 @@ function OrganizerCastingCard({
       </div>
 
       {/* PASEK AKCJI (poza korpusem, nie otwiera ParticipantsModal) */}
-      <div className="mt-3 pt-3 flex items-center justify-between">
-        {/* ❌ bez border-t */}
+      <div className="mt-3 flex items-center justify-between">
         {/* Edytuj – ciemny pomarańcz */}
         <Button
           variant="primary"
@@ -234,7 +285,7 @@ function OrganizerCastingCard({
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            // TODO: logika edycji
+            setEditOpen(true);
           }}
           disabled={deleting}
         >
@@ -267,7 +318,7 @@ function OrganizerCastingCard({
         </div>
       )}
 
-      {/* Modal potwierdzenia */}
+      {/* Modal potwierdzenia usuwania */}
       <Modal
         isOpen={confirmOpen}
         onClose={() => (!deleting ? setConfirmOpen(false) : null)}
@@ -283,6 +334,7 @@ function OrganizerCastingCard({
             </div>
           )}
           <div className="mt-5 flex justify-end gap-2">
+            {/* Anuluj — szary */}
             <Button
               type="button"
               onClick={() => setConfirmOpen(false)}
@@ -292,7 +344,7 @@ function OrganizerCastingCard({
               Anuluj
             </Button>
 
-            {/* Usuń — czerwony, ze spinnerem w trakcie */}
+            {/* Usuń — czerwony */}
             <Button
               onClick={handleDelete}
               disabled={deleting}
@@ -306,6 +358,21 @@ function OrganizerCastingCard({
           </div>
         </div>
       </Modal>
+
+      {/* Modal edycji */}
+      <Modal
+        isOpen={editOpen}
+        onClose={() => setEditOpen(false)}
+        panelClassName="w-[96vw] max-w-4xl max-h-[90vh] overflow-y-auto"
+      >
+        <EditCastingForm
+          casting={casting}
+          bannerUrl={bannerUrl}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => onDeleted?.(casting)}
+          onBannerUploaded={(id) => onBannerRefresh?.(id)}
+        />
+      </Modal>
     </div>
   );
 }
@@ -317,9 +384,13 @@ export default function OrganizerCastingList({
   selectedCastingId,
   onSelectCasting,
   onAfterDelete, // rodzic: refetchCastings?.()
+  onBannerRefresh, // rodzic: fetchBannerFor
 }) {
   // lokalny cache totalApplicants gdy backend nie dostarczył statystyk w liście
   const [statsMap, setStatsMap] = useState({}); // { [castingId]: { totalApplicants } }
+
+  // zapamiętaj, które castingi już auto-zamknęliśmy (w tej sesji)
+  const [autoClosed, setAutoClosed] = useState(() => new Set());
 
   // leniwe dociąganie statystyk dla tych castingów, które nie mają stats w liście
   useEffect(() => {
@@ -361,6 +432,59 @@ export default function OrganizerCastingList({
     };
   }, [castings, statsMap]);
 
+  // ✅ Po fetchu: jeśli wydarzenie minęło i status nie Closed → wyślij PUT, aby utrwalić "Closed"
+  useEffect(() => {
+    if (!Array.isArray(castings) || !castings.length) return;
+
+    const shouldClose = castings.filter((c) => {
+      if (!c || !c.id) return false;
+      if (autoClosed.has(c.id)) return false;
+      const past = isPastEvent(c.eventDate);
+      const closed = String(c.status || "Active") === "Closed";
+      return past && !closed;
+    });
+
+    if (!shouldClose.length) return;
+
+    (async () => {
+      const jobs = shouldClose.map((c) => {
+        const payload = {
+          title: c.title || "",
+          description: c.description || "",
+          location: c.location || "",
+          eventDate: new Date(c.eventDate).toISOString(),
+          requirements: c.requirements || "",
+          compensation: (c.compensation ?? "").toString(),
+          roles: roleNormalize(c.roles),
+          tags: Array.isArray(c.tags) ? c.tags : [],
+          status: "Closed",
+        };
+        return apiFetch(`/casting/casting/${c.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json-patch+json" },
+          body: JSON.stringify(payload),
+        })
+          .then(() => c.id)
+          .catch(() => null);
+      });
+
+      const results = await Promise.allSettled(jobs);
+      const closedIds = results
+        .map((r) => (r.status === "fulfilled" ? r.value : null))
+        .filter(Boolean);
+
+      if (closedIds.length) {
+        setAutoClosed((prev) => {
+          const next = new Set(prev);
+          closedIds.forEach((id) => next.add(id));
+          return next;
+        });
+        // refetch u rodzica, żeby status przyszedł już z API
+        onAfterDelete?.();
+      }
+    })();
+  }, [castings, onAfterDelete, autoClosed]);
+
   const content = useMemo(() => {
     if (isLoading) {
       return (
@@ -385,6 +509,7 @@ export default function OrganizerCastingList({
             onSelect={onSelectCasting}
             totalApplicantsOverride={statsMap[c.id]?.totalApplicants}
             onDeleted={() => onAfterDelete?.()}
+            onBannerRefresh={onBannerRefresh}
           />
         ))}
       </div>
@@ -397,6 +522,7 @@ export default function OrganizerCastingList({
     onSelectCasting,
     statsMap,
     onAfterDelete,
+    onBannerRefresh,
   ]);
 
   return (

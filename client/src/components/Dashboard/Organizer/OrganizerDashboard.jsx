@@ -266,6 +266,7 @@ export default function OrganizerDashboard() {
                 openParticipantsModal(c);
               }}
               onAfterDelete={() => refetchCastings?.()}
+              onBannerRefresh={fetchBannerFor}
             />
           </div>
 

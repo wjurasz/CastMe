@@ -1,28 +1,41 @@
-// src/components/Dashboard/Organizer/CreateCastingForm.jsx
-import { useCallback, useMemo, useState } from "react";
+// src/components/Dashboard/Organizer/EditCastingForm.jsx
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Card from "../../UI/Card";
 import Button from "../../UI/Button";
 import Input from "../../UI/Input";
 import { X, Plus } from "lucide-react";
 import { apiFetch } from "../../../utils/api";
 import { BannerImage } from "../../UI/BannerImage";
-
 import { useForm, Controller, useFieldArray } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "../../../context/ToastProvider";
 
 const ALL_ROLES = ["Model", "Fotograf", "Projektant", "Wolontariusz"];
+// na górze pliku
+// tylko te dwa statusy
+const STATUS_VALUES = ["Active", "Closed"];
+const STATUS_LABELS = {
+  Active: "Aktywny",
+  Closed: "Zamknięty",
+};
 
-// UI (PL) -> API (EN)
+// UI(PL) -> API(EN)
 const roleMap = {
   Model: "Model",
   Fotograf: "Photographer",
   Projektant: "Designer",
   Wolontariusz: "Volunteer",
 };
+// API(EN) -> UI(PL)
+const roleMapBack = {
+  Model: "Model",
+  Photographer: "Fotograf",
+  Designer: "Projektant",
+  Volunteer: "Wolontariusz",
+};
 
-/** Absolutny URL do pliku (Swagger zwraca np. "/uploads/...") */
+/** Absolutny URL dla ścieżek z API (np. '/uploads/...') */
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
   (typeof window !== "undefined" ? window.location.origin : "");
@@ -34,7 +47,7 @@ const toAbsoluteUrl = (u) => {
 const bust = (url) =>
   !url ? "" : `${url}${url.includes("?") ? "&" : "?"}v=${Date.now()}`;
 
-/** Cache bannerów w localStorage — wspólny z hookiem useCastingBanners */
+/** Wspólny cache bannerów z listą */
 const BANNERS_STORAGE_KEY = "castingBannerUrls";
 const readBannerCache = () => {
   try {
@@ -47,27 +60,80 @@ const writeBannerCache = (obj) => {
   try {
     localStorage.setItem(BANNERS_STORAGE_KEY, JSON.stringify(obj));
   } catch {}
-
-  /* util: minimalny czas trwania operacji (ładniejszy UX) */
-};
-const withMinDelay = async (promise, ms = 1000) => {
-  const [res] = await Promise.all([
-    promise,
-    new Promise((r) => setTimeout(r, ms)),
-  ]);
-  return res;
 };
 
-// Walidacja pliku bannera
 const ALLOWED_IMAGE = /^image\/(png|jpe?g|webp|gif)$/i;
 const MAX_IMAGE_MB = 5;
-
-// Limity pól
 const TAG_MAX_LEN = 24;
 const CAPACITY_MIN = 1;
 const CAPACITY_MAX = 100;
 
-// ------ Zod schema ------
+const toDatetimeLocalValue = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
+};
+
+// z API -> do formularza (PL), bez duplikatów, Model pierwszy
+function sanitizeRolesFromApi(apiRoles) {
+  const arr = Array.isArray(apiRoles) ? apiRoles : [];
+  const seen = new Set();
+  const unique = [];
+  for (const r of arr) {
+    const pl = roleMapBack[r?.role] || "Model";
+    if (seen.has(pl)) continue;
+    seen.add(pl);
+    unique.push({ role: pl, capacity: r?.capacity ?? "" });
+  }
+  const modelIdx = unique.findIndex((r) => r.role === "Model");
+  if (modelIdx === -1) unique.unshift({ role: "Model", capacity: "" });
+  else if (modelIdx !== 0) {
+    const [m] = unique.splice(modelIdx, 1);
+    unique.unshift(m);
+  }
+  return unique;
+}
+
+// z formularza -> do API (EN), bez duplikatów, Model pierwszy
+function normalizeRolesForSubmit(rolesPl) {
+  const cleaned = (Array.isArray(rolesPl) ? rolesPl : [])
+    .filter((r) => r?.role)
+    .map((r) => ({
+      role: roleMap[r.role],
+      capacity: Math.trunc(Number(r.capacity)),
+    }))
+    .filter(
+      (r) =>
+        r.role &&
+        Number.isFinite(r.capacity) &&
+        r.capacity >= CAPACITY_MIN &&
+        r.capacity <= CAPACITY_MAX
+    );
+
+  const seen = new Set();
+  const out = [];
+  for (const r of cleaned) {
+    if (seen.has(r.role)) continue;
+    seen.add(r.role);
+    out.push(r);
+  }
+  const modelIdx = out.findIndex((r) => r.role === "Model");
+  if (modelIdx > 0) {
+    const [m] = out.splice(modelIdx, 1);
+    out.unshift(m);
+  }
+  if (modelIdx === -1) {
+    const modelCap = Math.trunc(Number(rolesPl?.[0]?.capacity)) || 1;
+    out.unshift({ role: "Model", capacity: modelCap });
+  }
+  return out;
+}
+
+// schema
 const roleItemSchema = z.object({
   role: z.enum(ALL_ROLES, { required_error: "Wybierz rolę" }),
   capacity: z.union([z.string(), z.number()]).refine((v) => {
@@ -81,41 +147,24 @@ const formSchema = z
     title: z
       .string({ required_error: "Tytuł jest wymagany" })
       .trim()
-      .min(5, "Tytuł musi mieć od 5 do 100 znaków")
-      .max(100, "Tytuł musi mieć od 5 do 100 znaków"),
+      .min(5)
+      .max(100),
     description: z
       .string({ required_error: "Opis jest wymagany" })
       .trim()
-      .min(20, "Opis musi mieć od 20 do 2000 znaków")
-      .max(2000, "Opis musi mieć od 20 do 2000 znaków"),
-    requirements: z
-      .string({ required_error: "Wymagania są wymagane" })
-      .trim()
-      .max(1000, "Wymagania nie mogą przekraczać 1000 znaków"),
-    location: z
-      .string({ required_error: "Lokalizacja jest wymagana" })
-      .trim()
-      .min(2, "Lokalizacja musi mieć od 2 do 100 znaków")
-      .max(100, "Lokalizacja musi mieć od 2 do 100 znaków"),
-    // datetime-local -> string, sprawdzamy "nie w przeszłości"
+      .min(20)
+      .max(2000),
+    requirements: z.string().trim().max(1000),
+    location: z.string().trim().min(2).max(100),
     deadline: z
       .string({ required_error: "Termin jest wymagany" })
-      .refine((v) => {
-        if (!v) return false;
-        const dt = new Date(v);
-        if (Number.isNaN(dt.getTime())) return false;
-        return dt.getTime() >= Date.now();
-      }, "Termin nie może być w przeszłości"),
+      .refine((v) => !Number.isNaN(new Date(v).getTime()), "Niepoprawna data"),
     showCompensation: z.boolean().default(false),
     compensation: z
       .string()
       .transform((v) => v.trim())
       .optional(),
-    roles: z
-      .array(roleItemSchema)
-      .min(1, "Dodaj przynajmniej jedną rolę")
-      .max(ALL_ROLES.length, "Za dużo ról"),
-    // trzymamy jako surowy string, ale normalizujemy później (dedupe, max 5, długość)
+    roles: z.array(roleItemSchema).min(1).max(ALL_ROLES.length),
     tags: z
       .string()
       .transform((v) => v.trim())
@@ -130,7 +179,7 @@ const formSchema = z
       )
       .refine((file) => {
         const f = file instanceof File ? file : file?.[0];
-        if (!f) return true; // brak pliku = OK
+        if (!f) return true;
         return ALLOWED_IMAGE.test(f.type);
       }, "Dozwolone formaty: PNG, JPG, JPEG, WEBP, GIF")
       .refine((file) => {
@@ -138,6 +187,7 @@ const formSchema = z
         if (!f) return true;
         return f.size <= MAX_IMAGE_MB * 1024 * 1024;
       }, `Maksymalny rozmiar pliku to ${MAX_IMAGE_MB} MB`),
+    status: z.enum(STATUS_VALUES).default("Active"),
   })
   .refine(
     (data) => {
@@ -145,10 +195,7 @@ const formSchema = z
       const txt = (data.compensation || "").trim();
       return txt.length <= 100;
     },
-    {
-      path: ["compensation"],
-      message: "Wynagrodzenie nie może być dłuższe niż 100 znaków",
-    }
+    { path: ["compensation"], message: "Wynagrodzenie maks. 100 znaków" }
   )
   .refine((data) => data.roles[0]?.role === "Model", {
     path: ["roles", 0, "role"],
@@ -166,13 +213,15 @@ const DEFAULT_VALUES = {
   roles: [{ role: "Model", capacity: "" }],
   deadline: "",
   bannerFile: undefined,
+  status: "Active",
 };
 
-export default function CreateCastingForm({
+export default function EditCastingForm({
+  casting,
   onClose,
-  onCreated,
-  createCasting,
-  onBannerUploaded, // opcjonalny callback z OrganizerDashboard
+  onSaved,
+  onBannerUploaded, // np. fetchBannerFor z rodzica
+  bannerUrl, // aktualny URL do podglądu
 }) {
   const { show } = useToast();
   const [isUploadingBanner, setIsUploadingBanner] = useState(false);
@@ -185,20 +234,43 @@ export default function CreateCastingForm({
     clearErrors,
     watch,
     reset,
-    formState: { errors, isSubmitting },
     setValue,
+    formState: { errors, isSubmitting, isDirty },
   } = useForm({
     resolver: zodResolver(formSchema),
     mode: "onBlur",
     defaultValues: DEFAULT_VALUES,
   });
 
-  const { fields, append, remove } = useFieldArray({
+  const { fields, append, remove, replace } = useFieldArray({
     control,
     name: "roles",
   });
 
-  // Dostęp do aktualnych wartości
+  // Inicjalizacja formularza danymi castingu
+  useEffect(() => {
+    if (!casting) return;
+    const initialRoles = sanitizeRolesFromApi(casting.roles);
+    reset({
+      title: casting.title || "",
+      description: casting.description || "",
+      requirements: casting.requirements || "",
+      location: casting.location || "",
+      compensation: casting.compensation || "",
+      showCompensation:
+        !!casting.compensation && String(casting.compensation).trim() !== "0",
+      tags: (Array.isArray(casting.tags) ? casting.tags : []).join(", "),
+      roles: initialRoles,
+      deadline: toDatetimeLocalValue(casting.eventDate),
+      bannerFile: undefined,
+      status: STATUS_VALUES.includes(casting?.status)
+        ? casting.status
+        : "Active",
+    });
+    replace(initialRoles); // ważne przy RHF – faktycznie podmienia tablicę pól
+  }, [casting, reset, replace]);
+
+  // Watchery
   const roles = watch("roles");
   const showCompensation = watch("showCompensation");
   const bannerField = watch("bannerFile");
@@ -213,58 +285,21 @@ export default function CreateCastingForm({
     [selectedRoleNames]
   );
 
-  // Upload bannera (po utworzeniu castingu)
-  const uploadCastingBanner = useCallback(async (castingId, file) => {
-    try {
-      if (!castingId || !file) return null;
-
-      const fd = new FormData();
-      fd.append("File", file); // zgodnie ze Swaggerem
-
-      const res = await apiFetch(`/casting/casting/${castingId}/banner`, {
-        method: "POST",
-        body: fd,
-      });
-
-      const fileUrl = res?.url ? toAbsoluteUrl(res.url) : "";
-      if (!fileUrl) {
-        const cache = readBannerCache();
-        writeBannerCache({ ...cache, [castingId]: null });
-        return null;
-      }
-
-      const busted = bust(fileUrl);
-      const cache = readBannerCache();
-      writeBannerCache({ ...cache, [castingId]: busted });
-      return busted;
-    } catch (e) {
-      console.error("Błąd uploadu bannera:", e);
-      const cache = readBannerCache();
-      writeBannerCache({ ...cache, [castingId]: null });
-      return null;
-    }
-  }, []);
-
-  // Dodanie dodatkowego wiersza roli
   const addEmptyRoleRow = () => {
     if (roles.length >= ALL_ROLES.length) return;
     append({ role: "", capacity: "" });
   };
-
   const removeRoleRow = (index) => {
-    // nie usuwamy pierwszego (Model)
     if (index === 0) return;
     remove(index);
   };
 
-  // Obsługa bannera: weryfikacja już w onChange, żeby feedback był natychmiastowy
   const onBannerChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) {
       setValue("bannerFile", undefined, { shouldValidate: true });
       return;
     }
-
     if (!ALLOWED_IMAGE.test(file.type)) {
       setError("bannerFile", {
         type: "manual",
@@ -281,12 +316,10 @@ export default function CreateCastingForm({
       e.target.value = "";
       return;
     }
-
     clearErrors("bannerFile");
     setValue("bannerFile", file, { shouldValidate: true });
   };
 
-  // Normalizacja tagów + walidacja dodatkowa (deduplikacja, długość)
   const parseTags = (raw) => {
     if (!raw) return [];
     const arr = raw
@@ -298,16 +331,36 @@ export default function CreateCastingForm({
     return unique.slice(0, 5);
   };
 
-  const onSubmit = async (data) => {
-    // dodatkowa walidacja tagów (z wiadomością per pole)
-    const normalizedTags = parseTags(data.tags);
-    if (normalizedTags.length > 5) {
-      setError("tags", {
-        type: "manual",
-        message: "Możesz dodać maksymalnie 5 tagów",
+  const uploadCastingBanner = useCallback(
+    async (castingId, file) => {
+      if (!castingId || !file) return null;
+      const fd = new FormData();
+      fd.append("File", file);
+      const res = await apiFetch(`/casting/casting/${castingId}/banner`, {
+        method: "POST",
+        body: fd,
       });
+      const fileUrl = res?.url ? toAbsoluteUrl(res.url) : "";
+      const busted = bust(fileUrl);
+      const cache = readBannerCache();
+      writeBannerCache({ ...cache, [castingId]: busted || null });
+      onBannerUploaded?.(castingId);
+      return busted;
+    },
+    [onBannerUploaded]
+  );
+
+  const onSubmit = async (data) => {
+    // jeśli nic się nie zmieniło i nie wybrano nowego bannera → nie wysyłamy
+    const hasNewBanner = data.bannerFile instanceof File;
+    if (!isDirty && !hasNewBanner) {
+      show("Brak zmian do zapisania.", "info");
+      onClose?.();
       return;
     }
+
+    // tagi (walidacja długości)
+    const normalizedTags = parseTags(data.tags);
     const tooLong = normalizedTags.find((t) => t.length > TAG_MAX_LEN);
     if (tooLong) {
       setError("tags", {
@@ -317,107 +370,71 @@ export default function CreateCastingForm({
       return;
     }
 
-    // capacity -> int
-    const safeRoles = data.roles
-      .filter((r) => r.role)
-      .map((r) => ({
-        role: roleMap[r.role],
-        capacity: Math.trunc(Number(r.capacity)),
-      }));
+    const rolesForApi = normalizeRolesForSubmit(data.roles);
 
     const payload = {
       title: data.title.trim(),
       description: data.description.trim(),
       location: data.location.trim(),
-      eventDate: new Date(data.deadline).toISOString(), // dokładny timestamp z datetime-local
+      eventDate: new Date(data.deadline).toISOString(),
       requirements: data.requirements.trim(),
       compensation: data.showCompensation
         ? (data.compensation || "").trim()
         : "",
-      roles: safeRoles,
+      roles: rolesForApi,
       tags: normalizedTags,
+      status: data.status, // ⬅️ z selecta
     };
 
     try {
-      // gwarantujemy min. 1s, żeby UX pokazał wyraźny loading
-      const result = await withMinDelay(createCasting(payload), 1000);
+      await apiFetch(`/casting/casting/${casting.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json-patch+json" },
+        body: JSON.stringify(payload),
+      });
 
-      if (!result?.success) {
-        console.error("createCasting error:", result);
-        setError("root", {
-          type: "server",
-          message: result?.error || "Błąd podczas tworzenia castingu",
-        });
-        show(result?.error || "Błąd podczas tworzenia castingu", "error");
-        return;
-      }
-
-      const createdCasting = result?.casting ?? result?.data ?? result;
-      const newId = createdCasting?.id;
-      if (!newId) {
-        console.error("Brak ID w odpowiedzi API:", result);
-        setError("root", {
-          type: "server",
-          message: "Casting utworzony, ale nie udało się odczytać jego ID.",
-        });
-        show("Casting utworzony, ale nie udało się odczytać jego ID.", "error");
-        return;
-      }
-
-      // Upload bannera (opcjonalny)
+      // opcjonalny upload bannera po zapisie
       const f = data.bannerFile instanceof File ? data.bannerFile : undefined;
       if (f) {
         try {
           setIsUploadingBanner(true);
-          await withMinDelay(uploadCastingBanner(newId, f), 800); // lekki min-delay dla spójności
-          onBannerUploaded?.(newId);
-        } catch (err) {
-          console.error("Błąd uploadu bannera:", err);
-          setError("root", {
-            type: "server",
-            message: "Casting utworzony, ale nie udało się wgrać bannera.",
-          });
-          show("Casting utworzony, ale nie udało się wgrać bannera.", "error");
+          await uploadCastingBanner(casting.id, f);
         } finally {
           setIsUploadingBanner(false);
         }
       }
 
-      reset(DEFAULT_VALUES);
-      onCreated?.();
-      show("Casting został utworzony pomyślnie!", "success");
+      show("Zmiany zapisane.", "success");
+      onSaved?.();
+      onClose?.();
     } catch (err) {
-      console.error("Wyjątek przy tworzeniu castingu:", err);
+      console.error("Błąd zapisu castingu:", err);
       setError("root", {
         type: "server",
-        message: "Błąd podczas tworzenia castingu",
+        message: err?.message || "Błąd podczas zapisu castingu",
       });
-      show("Błąd podczas tworzenia castingu", "error");
+      show(err?.message || "Błąd podczas zapisu castingu", "error");
     }
   };
 
   return (
-    <Card className="mb-8 relative">
+    <Card className="mb-0 relative">
       <button
         type="button"
         onClick={onClose}
-        className="absolute top-3 right-3 z-10 bg-[#EA1A62] text-white rounded-full p-1.5 hover:bg-[#c7154f] focus:outline-none focus:ring-2 focus:ring-[#EA1A62]"
-        aria-label="Zamknij formularz"
+        className="absolute top-3 right-3 z-10 bg-[#EA1A62] text-white rounded-full p-1.5 hover:bg-[#c7154f] focus:outline-none focus:ring-2 focus:ring-[#EA1A62] hover:cursor-pointer"
+        aria-label="Zamknij edycję"
         title="Zamknij"
       >
         <X className="w-4 h-4" />
       </button>
 
       <Card.Header>
-        <h2 className="text-xl font-semibold text-[#2B2628]">
-          Utwórz nowy casting
-        </h2>
+        <h2 className="text-xl font-semibold text-[#2B2628]">Edytuj casting</h2>
       </Card.Header>
 
       <Card.Content>
-        {/* relative, żeby overlay mógł się pozycjonować */}
         <div className="relative">
-          {/* OVERLAY w trakcie wysyłki/ uploadu */}
           {(isSubmitting || isUploadingBanner) && (
             <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-20 flex items-center justify-center">
               <div className="flex items-center gap-3">
@@ -425,7 +442,7 @@ export default function CreateCastingForm({
                 <span className="text-[#2B2628] font-medium">
                   {isUploadingBanner
                     ? "Wgrywanie bannera…"
-                    : "Tworzenie castingu…"}
+                    : "Zapisywanie zmian…"}
                 </span>
               </div>
             </div>
@@ -489,7 +506,7 @@ export default function CreateCastingForm({
             {/* Wymagania */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Wymagania <span className="text-red-500">*</span>
+                Wymagania
               </label>
               <Controller
                 name="requirements"
@@ -561,7 +578,7 @@ export default function CreateCastingForm({
                             <input
                               {...field}
                               type="text"
-                              placeholder="np. 500–800 PLN"
+                              placeholder="np. 300–500 PLN/dzień"
                               className={`block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-[#EA1A62] focus:border-[#EA1A62] ${
                                 errors.compensation
                                   ? "border-red-300"
@@ -712,7 +729,7 @@ export default function CreateCastingForm({
                 )}
             </div>
 
-            {/* Termin (data i godzina) */}
+            {/* Termin */}
             <Controller
               name="deadline"
               control={control}
@@ -730,7 +747,7 @@ export default function CreateCastingForm({
               )}
             />
 
-            {/* Banner – upload + podgląd */}
+            {/* Banner – podgląd aktualnego lub wybranego */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Banner castingu{" "}
@@ -740,17 +757,34 @@ export default function CreateCastingForm({
               </label>
 
               {!bannerField ? (
-                <label className="flex items-center justify-center w-full aspect-[16/9] border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-[#EA1A62]">
-                  <span className="text-gray-500">
-                    Kliknij, aby dodać banner
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={onBannerChange}
-                  />
-                </label>
+                bannerUrl ? (
+                  <div className="relative w-full">
+                    <BannerImage src={bannerUrl} alt="Aktualny banner" />
+                    <label className="absolute bottom-2 right-2">
+                      <span className="bg-black/60 text-white text-xs px-3 py-1.5 rounded cursor-pointer hover:bg-black/70">
+                        Zmień banner
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={onBannerChange}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <label className="flex items-center justify-center w-full aspect-[16/9] border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-[#EA1A62]">
+                    <span className="text-gray-500">
+                      Kliknij, aby dodać banner
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={onBannerChange}
+                    />
+                  </label>
+                )
               ) : (
                 <div className="relative w-full">
                   <BannerImage
@@ -768,6 +802,7 @@ export default function CreateCastingForm({
                       clearErrors("bannerFile");
                     }}
                     className="absolute top-2 right-2 bg-[#EA1A62] text-white rounded-full p-1 hover:bg-[#c7154f]"
+                    title="Usuń wybrany plik"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -797,22 +832,56 @@ export default function CreateCastingForm({
               )}
             />
 
+            {/* Status */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Status
+              </label>
+              <Controller
+                name="status"
+                control={control}
+                render={({ field }) => (
+                  <select
+                    {...field}
+                    className="block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-[#EA1A62] focus:border-[#EA1A62] border-gray-300 bg-white"
+                  >
+                    {STATUS_VALUES.map((v) => (
+                      <option key={v} value={v}>
+                        {STATUS_LABELS[v]}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              />
+              {errors.status && (
+                <p className="text-sm text-red-600 mt-1">
+                  {errors.status.message}
+                </p>
+              )}
+            </div>
+
+            {/* Akcje */}
             <div className="flex space-x-3">
               <Button
                 type="submit"
                 disabled={isSubmitting || isUploadingBanner}
-                className="inline-flex items-center justify-center gap-2"
+                className="inline-flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700"
               >
                 {isSubmitting || isUploadingBanner ? (
                   <>
                     <span className="inline-block h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                    {isUploadingBanner ? "Wgrywanie…" : "Tworzenie…"}
+                    {isUploadingBanner ? "Wgrywanie…" : "Zapisywanie…"}
                   </>
                 ) : (
-                  "Utwórz casting"
+                  "Zapisz zmiany"
                 )}
               </Button>
-              <Button variant="outline" type="button" onClick={onClose}>
+              <Button
+                variant="outline"
+                type="button"
+                onClick={onClose}
+                className="bg-gray-500 text-white px-6 hover:bg-gray-600"
+              >
                 Anuluj
               </Button>
             </div>

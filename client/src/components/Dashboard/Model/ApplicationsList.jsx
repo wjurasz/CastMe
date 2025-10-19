@@ -1,5 +1,12 @@
 import Card from "../../UI/Card";
-import { Calendar, MapPin, BadgeCheck, Clock, XCircle } from "lucide-react";
+import {
+  Calendar,
+  MapPin,
+  BadgeCheck,
+  Clock,
+  XCircle,
+  Banknote,
+} from "lucide-react";
 
 function StatusPill({ status }) {
   const s = String(status).toLowerCase();
@@ -67,13 +74,7 @@ const formatDateTime = (iso) => {
 };
 
 export default function ApplicationsList({ applications, castings }) {
-  // applications: [{ castingId, assignmentId, assignmentStatus, role, title?, eventDate?, location? }]
-  const rows = Array.isArray(aplicationsFix(applications)) ? applications : [];
-
-  function aplicationsFix(a) {
-    // helper defensive only
-    return a;
-  }
+  const rows = Array.isArray(applications) ? applications : [];
 
   return (
     <Card>
@@ -88,12 +89,18 @@ export default function ApplicationsList({ applications, castings }) {
         ) : (
           <div className="space-y-3">
             {rows.map((row) => {
-              // ✅ jedno wyszukanie castingu
+              // jedno wyszukanie castingu
               const casting = castings?.find((c) => c.id === row.castingId);
 
               const title = row.title || casting?.title || "—";
               const location = row.location || casting?.location || "—";
               const eventDate = row.eventDate || casting?.eventDate || null;
+
+              // compensation jako surowy tekst (bez formatowania waluty)
+              const rawComp = row?.compensation ?? casting?.compensation ?? "";
+              const compensation = String(rawComp || "").trim();
+              const showCompensation =
+                compensation !== "" && compensation !== "0";
 
               return (
                 <div
@@ -113,6 +120,12 @@ export default function ApplicationsList({ applications, castings }) {
                         <Calendar className="w-4 h-4 mr-1" />
                         {formatDateTime(eventDate)}
                       </span>
+                      {showCompensation && (
+                        <span className="inline-flex items-center">
+                          <Banknote className="w-4 h-4 mr-1" />
+                          {compensation}
+                        </span>
+                      )}
                       {row.role ? (
                         <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700">
                           {roleDisplayMap[row.role] || row.role}
