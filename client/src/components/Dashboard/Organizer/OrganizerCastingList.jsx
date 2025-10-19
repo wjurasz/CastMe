@@ -1,7 +1,13 @@
 // src/components/Dashboard/Organizer/OrganizerCastingList.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Card from "../../UI/Card";
-import { Calendar, MapPin, Users, Banknote } from "lucide-react";
+import {
+  Calendar,
+  MapPin,
+  Users,
+  Banknote,
+  Filter as FilterIcon,
+} from "lucide-react";
 import { BannerImage, BannerPlaceholder } from "../../UI/BannerImage";
 import { apiFetch } from "../../../utils/api";
 import Modal from "../../UI/Modal";
@@ -377,6 +383,89 @@ function OrganizerCastingCard({
   );
 }
 
+function SortMenu({ sortKey, sortDir, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("click", onDocClick, { passive: true });
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  const Item = ({ label, value }) => (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={sortKey === value}
+      className={`w-full text-left px-3 py-2 rounded-md cursor-pointer transition-colors
+        ${sortKey === value ? "bg-gray-100" : "hover:bg-gray-50"}`}
+      onClick={() => onChange(value, sortDir)}
+    >
+      {label}
+    </button>
+  );
+
+  const DirBtn = ({ label, value }) => (
+    <button
+      type="button"
+      className={`px-2 py-1 border rounded-md text-xs cursor-pointer transition-colors
+        ${
+          sortDir === value
+            ? "bg-gray-100 border-gray-300"
+            : "hover:bg-gray-50 border-gray-300"
+        }`}
+      onClick={() => onChange(sortKey, value)}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="relative" ref={ref}>
+      {/* przycisk jak na screenie: chip, bez strzałki, z focus ringiem */}
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-2xl
+                   border border-gray-300 bg-gray-50 text-gray-800 shadow-inner
+                   hover:bg-gray-100 cursor-pointer
+                   focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-300
+                   focus-visible:ring-offset-1 transition-colors"
+        title="Filtry"
+      >
+        <FilterIcon className="w-4 h-4 text-gray-700" />
+        Filtry
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 mt-2 w-72 bg-white border border-gray-200
+                     rounded-xl shadow-lg p-2 z-20"
+        >
+          <div className="px-2 py-1 text-xs text-gray-500">Kryterium</div>
+          <Item label="Domyślne (Aktywne↑, Zamknięte↓)" value="default" />
+          <Item label="Data wydarzenia" value="eventDate" />
+          <Item label="Status (Aktywne↔Zamknięte)" value="status" />
+          <Item label="Liczba zgłoszeń" value="applicants" />
+
+          <div className="mt-2 px-2 py-1 text-xs text-gray-500">Kierunek</div>
+          <div className="flex items-center gap-2 px-2 pb-2">
+            <DirBtn label="Rosnąco" value="asc" />
+            <DirBtn label="Malejąco" value="desc" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function OrganizerCastingList({
   castings,
   castingBanners,
@@ -391,6 +480,10 @@ export default function OrganizerCastingList({
 
   // zapamiętaj, które castingi już auto-zamknęliśmy (w tej sesji)
   const [autoClosed, setAutoClosed] = useState(() => new Set());
+
+  // --- SORT & FILTER STATE ---
+  const [sortKey, setSortKey] = useState("default"); // default | eventDate | status | applicants
+  const [sortDir, setSortDir] = useState("asc"); // asc | desc
 
   // leniwe dociąganie statystyk dla tych castingów, które nie mają stats w liście
   useEffect(() => {
@@ -485,6 +578,7 @@ export default function OrganizerCastingList({
     })();
   }, [castings, onAfterDelete, autoClosed]);
 
+  // widok listy + sortowanie (useMemo dla performance)
   const content = useMemo(() => {
     if (isLoading) {
       return (
@@ -498,9 +592,67 @@ export default function OrganizerCastingList({
         </p>
       );
     }
+
+    // --- helpery przeniesione do środka, żeby nie było warningów deps ---
+    const effectiveStatus = (c) =>
+      isPastEvent(c?.eventDate) ? "Closed" : String(c?.status || "Active");
+
+    const ts = (c) => {
+      const raw = c?.eventDate || c?.createdAt || 0;
+      if (!raw) return 0;
+      if (
+        typeof raw === "string" &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(raw)
+      ) {
+        return new Date(raw + "Z").getTime();
+      }
+      return new Date(raw).getTime();
+    };
+
+    const applicantsCount = (c) =>
+      getTotalFromStats(c?.stats) ??
+      statsMap[c.id]?.totalApplicants ??
+      c?.totalApplicants ??
+      c?.applicantsCount ??
+      0;
+
+    const arr = [...castings];
+
+    arr.sort((a, b) => {
+      if (sortKey === "eventDate") {
+        const da = ts(a),
+          db = ts(b);
+        return sortDir === "asc" ? da - db : db - da;
+      }
+      if (sortKey === "status") {
+        const rank = (c) => {
+          const s = effectiveStatus(c);
+          return s === "Active" ? 0 : s === "Draft" ? 1 : 2;
+        };
+        const ra = rank(a),
+          rb = rank(b);
+        return sortDir === "asc" ? ra - rb : rb - ra;
+      }
+      if (sortKey === "applicants") {
+        const aa = applicantsCount(a),
+          ab = applicantsCount(b);
+        return sortDir === "asc" ? aa - ab : ab - aa;
+      }
+      // default: Active najpierw (rosnąco po dacie), Closed na końcu (malejąco po dacie)
+      const aClosed = effectiveStatus(a) === "Closed";
+      const bClosed = effectiveStatus(b) === "Closed";
+      if (aClosed !== bClosed) return aClosed ? 1 : -1; // Active → top
+      if (!aClosed && !bClosed) {
+        // Active → rosnąco
+        return ts(a) - ts(b);
+      }
+      // Closed → malejąco
+      return ts(b) - ts(a);
+    });
+
     return (
       <div className="space-y-4">
-        {castings.map((c) => (
+        {arr.map((c) => (
           <OrganizerCastingCard
             key={c.id}
             casting={c}
@@ -520,15 +672,29 @@ export default function OrganizerCastingList({
     castingBanners,
     selectedCastingId,
     onSelectCasting,
-    statsMap,
+    statsMap, // dla sortowania po applicants
     onAfterDelete,
     onBannerRefresh,
+    sortKey,
+    sortDir,
   ]);
 
   return (
     <Card>
       <Card.Header>
-        <h2 className="text-xl font-semibold text-[#2B2628]">Moje castingi</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-[#2B2628]">
+            Moje castingi
+          </h2>
+          <SortMenu
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onChange={(nextKey, nextDir) => {
+              setSortKey(nextKey);
+              setSortDir(nextDir);
+            }}
+          />
+        </div>
       </Card.Header>
       <Card.Content>{content}</Card.Content>
     </Card>

@@ -1,3 +1,4 @@
+// src/components/Casting/Model/ApplicationsList.jsx
 import Card from "../../UI/Card";
 import {
   Calendar,
@@ -73,8 +74,34 @@ const formatDateTime = (iso) => {
   });
 };
 
+// pomocnicze: określ czy casting zakończony (status Closed lub data w przeszłości)
+const isCastingFinished = (row, casting) => {
+  const statusClosed = String(casting?.status || "Active") === "Closed";
+  const eventIso = row?.eventDate || casting?.eventDate || null;
+  const d = eventIso ? parseApiDate(eventIso) : null;
+  const inPast = d ? d.getTime() < Date.now() : false;
+  return statusClosed || inPast;
+};
+
 export default function ApplicationsList({ applications, castings }) {
   const rows = Array.isArray(applications) ? applications : [];
+  const list = Array.isArray(castings) ? castings : [];
+
+  // Wzbogacamy wiersze o eventDate i referencję castingu,
+  // filtrujemy zakończone, a następnie sortujemy malejąco po dacie wydarzenia (najnowsze na górze).
+  const prepared = rows
+    .map((row) => {
+      const casting = list.find((c) => c.id === row.castingId);
+      const eventIso = row?.eventDate || casting?.eventDate || null;
+      const ts = eventIso ? parseApiDate(eventIso)?.getTime() || 0 : 0;
+      return { row, casting, eventIso, ts };
+    })
+    .filter(({ row, casting }) => {
+      // Nie pokazuj zgłoszeń z zakończonych castingów
+      if (!casting && !row?.eventDate) return true; // brak danych o castingu i dacie — zachowawczo pokaż
+      return !isCastingFinished(row, casting);
+    })
+    .sort((a, b) => b.ts - a.ts); // najnowsze (większy ts) najpierw
 
   return (
     <Card>
@@ -84,17 +111,14 @@ export default function ApplicationsList({ applications, castings }) {
         </h2>
       </Card.Header>
       <Card.Content>
-        {!rows.length ? (
+        {!prepared.length ? (
           <p className="text-gray-500 text-center py-4">Brak zgłoszeń.</p>
         ) : (
           <div className="space-y-3">
-            {rows.map((row) => {
-              // jedno wyszukanie castingu
-              const casting = castings?.find((c) => c.id === row.castingId);
-
+            {prepared.map(({ row, casting, eventIso }) => {
               const title = row.title || casting?.title || "—";
               const location = row.location || casting?.location || "—";
-              const eventDate = row.eventDate || casting?.eventDate || null;
+              const eventDate = eventIso;
 
               // compensation jako surowy tekst (bez formatowania waluty)
               const rawComp = row?.compensation ?? casting?.compensation ?? "";
