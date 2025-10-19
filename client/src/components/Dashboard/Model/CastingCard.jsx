@@ -72,13 +72,19 @@ export default function CastingCard({
       })
     : "—";
 
-  // Wynagrodzenie jako surowy tekst
   const compensation = String(casting?.compensation ?? "").trim();
   const showCompensation = compensation !== "" && compensation !== "0";
 
+  // overlay „Zakończony” na bannerze: gdy status Closed lub data minęła
+  const isClosed = String(casting?.status || "Active") === "Closed";
+  const eventInPast = casting?.eventDate
+    ? new Date(casting.eventDate).getTime() < Date.now()
+    : false;
+  const showClosedOverlay = isClosed || eventInPast;
+
   return (
     <div className="border rounded-lg p-4">
-      <div className="w-full mb-3">
+      <div className="relative w-full mb-3">
         {bannerUrl ? (
           <BannerImage
             src={bannerUrl}
@@ -87,6 +93,15 @@ export default function CastingCard({
           />
         ) : (
           <BannerPlaceholder />
+        )}
+
+        {showClosedOverlay && (
+          <span
+            className="absolute bottom-2 right-2 px-3 py-1.5 rounded-md text-lg font-semibold
+                       bg-red-600 text-white shadow-sm"
+          >
+            Zakończony
+          </span>
         )}
       </div>
 
