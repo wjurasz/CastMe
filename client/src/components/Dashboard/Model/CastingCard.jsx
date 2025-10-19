@@ -1,5 +1,5 @@
 // src/components/Casting/Model/CastingCard.jsx
-import { Calendar, MapPin } from "lucide-react";
+import { Calendar, MapPin, Banknote } from "lucide-react";
 import Button from "../../UI/Button";
 import { BannerImage, BannerPlaceholder } from "../../UI/BannerImage";
 
@@ -72,6 +72,10 @@ export default function CastingCard({
       })
     : "—";
 
+  // Wynagrodzenie jako surowy tekst
+  const compensation = String(casting?.compensation ?? "").trim();
+  const showCompensation = compensation !== "" && compensation !== "0";
+
   return (
     <div className="border rounded-lg p-4">
       <div className="w-full mb-3">
@@ -106,6 +110,12 @@ export default function CastingCard({
           <Calendar className="w-4 h-4 mr-1" />
           {eventDateTime}
         </div>
+        {showCompensation && (
+          <div className="flex items-center">
+            <Banknote className="w-4 h-4 mr-1" />
+            {compensation}
+          </div>
+        )}
       </div>
 
       {/* Liczniki ról */}
