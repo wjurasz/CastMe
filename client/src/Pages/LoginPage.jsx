@@ -75,7 +75,7 @@ const LoginPage = () => {
 
   const onSubmit = async (data) => {
     try {
-      // Backend powinien akceptować email LUB username w pierwszym parametrze
+      // Backend przyjmuje w loginie userName (email lub username)
       const result = await login(data.identifier, data.password);
 
       if (!result?.success) {
@@ -86,7 +86,7 @@ const LoginPage = () => {
         return;
       }
 
-      navigate("/profile");
+      navigate("/dashboard");
     } catch (e) {
       console.error(e);
       setError("root", {
