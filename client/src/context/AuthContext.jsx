@@ -22,23 +22,55 @@ export const AuthProvider = ({ children }) => {
     localStorage.getItem("refreshToken")
   );
 
-  // 🔑 Logowanie
+  // 🔑 Logowanie (z blokadą dla niezatwierdzonych)
   const login = async (userName, password) => {
     try {
+      // 1) podstawowe logowanie
       const res = await apiFetch("/api/Auth/login", {
         method: "POST",
         body: JSON.stringify({ userName, password }),
       });
 
+      const user = res?.user;
+      const userId = user?.id;
+
+      if (!user || !userId) {
+        console.error("Login: brak usera lub ID w odpowiedzi:", res);
+        return { success: false, error: "Błąd logowania" };
+      }
+
+      // 2) sprawdzenie aktywności / zatwierdzenia
+      //    /GetActive/{userId} → 200 (zatwierdzony, zwraca usera), 404 (niezatwierdzony)
+      let isApproved = false;
+      try {
+        // UWAGA: zgodnie z Twoim Swaggerem endpoint jest bez prefiksu /api
+        await apiFetch(`/GetActive/${userId}`, { method: "GET" });
+        isApproved = true; // skoro 200, to aktywny
+      } catch (err) {
+        // 404 → niezatwierdzone konto
+        // apiFetch w razie 4xx/5xx rzuca wyjątek – traktujemy to jako brak akceptacji
+        isApproved = false;
+      }
+
+      if (!isApproved) {
+        // TWARDY BRAK LOGOWANIA: nie zapisujemy tokenów ani currentUser
+        return {
+          success: false,
+          error:
+            "Twoje konto nie zostało jeszcze zatwierdzone przez organizatora.",
+        };
+      }
+
+      // 3) zapis tokenów i użytkownika DOPIERO po pozytywnym sprawdzeniu
       setAccessToken(res.accessToken);
       setRefreshToken(res.refreshToken);
-      setCurrentUser(res.user);
+      setCurrentUser(user);
 
       localStorage.setItem("accessToken", res.accessToken);
       localStorage.setItem("refreshToken", res.refreshToken);
-      localStorage.setItem("currentUser", JSON.stringify(res.user));
+      localStorage.setItem("currentUser", JSON.stringify(user));
 
-      return { success: true, user: res.user };
+      return { success: true, user };
     } catch (err) {
       console.error("Login error:", err);
       return { success: false, error: "Nieprawidłowe dane logowania" };
@@ -62,6 +94,8 @@ export const AuthProvider = ({ children }) => {
         body: formData,
       });
 
+      // Po rejestracji NIE logujemy automatycznie:
+      // nie zapisujemy tokenów; ewentualnie możesz chcieć tylko zapisać pending usera do localStorage:
       setCurrentUser(res);
       localStorage.setItem("currentUser", JSON.stringify(res));
 
