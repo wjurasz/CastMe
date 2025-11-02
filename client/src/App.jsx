@@ -18,6 +18,8 @@ import FavoritesPage from "./Pages/FavoritesPage";
 import ProfileFilterPage from "./Pages/ProfileFilterPage";
 import StatusUpdatePage from "./Pages/StatusUpdatePage";
 import ContactPage from "./Pages/ContactPage.jsx";
+import HowItWorks from "./Pages/HowItWorks";
+import CastingsPage from "./Pages/Castings";
 import { ToastProvider } from "./context/ToastProvider.jsx";
 
 function App() {
@@ -37,6 +39,11 @@ function App() {
                     <Route path="/dashboard" element={<Dashboard />} />
                     <Route path="/profile/:userId" element={<ProfilePage />} />
                     <Route path="/about" element={<AboutPage />} />
+
+                    {/* NOWA TRASA */}
+                    <Route path="/how-it-works" element={<HowItWorks />} />
+                    <Route path="/castings" element={<CastingsPage />} />
+
                     <Route path="/edit-profile" element={<EditProfilePage />} />
                     <Route path="/favorites" element={<FavoritesPage />} />
                     <Route
