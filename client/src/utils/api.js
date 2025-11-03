@@ -586,3 +586,38 @@ export async function sendEmail(data) {
   }
 }
 
+export async function getActiveUser(userId) {
+  try {
+    // Pełny URL backendu lub jeśli proxy w Vite, wystarczy ścieżka /api
+    const response = await fetch(`https://castme-pl.azurewebsites.net/GetActive/${userId}`, {
+      method: "GET",
+      credentials: "include", // jeśli używasz ciasteczek/autoryzacji
+      headers: {
+        "Accept": "application/json",
+      },
+    });
+
+    // Sprawdzamy status
+    if (response.status === 200) {
+      // Upewniamy się, że response to JSON
+      const text = await response.text();
+      try {
+        const data = JSON.parse(text);
+        return { success: true, data };
+      } catch {
+        // Jeśli nie JSON, traktujemy jako błąd
+        console.error("Expected JSON but got:", text);
+        return { success: false, error: "Nieprawidłowa odpowiedź serwera" };
+      }
+    } else if (response.status === 404) {
+      return { success: false, error: "Twoje konto nie zostało jeszcze zatwierdzone przez organizatora." };
+    } else {
+      return { success: false, error: `Błąd serwera: ${response.status}` };
+    }
+  } catch (err) {
+    console.error("Fetch error:", err);
+    return { success: false, error: "Nie udało się połączyć z serwerem" };
+  }
+}
+
+

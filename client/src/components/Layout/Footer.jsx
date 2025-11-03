@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Mail } from "lucide-react";
 import { Link } from "react-router-dom";
 import Modal from "../UI/Modal"; // ścieżkę dostosuj do miejsca, gdzie trzymasz Modal.jsx
-import HowItWorks from "../../pages/HowItWorks";
+import HowItWorks from "../../Pages/HowItWorks.jsx";
 
 function Footer() {
   const [openModal, setOpenModal] = useState(null); // 'terms' | 'privacy' | 'cookies' | null

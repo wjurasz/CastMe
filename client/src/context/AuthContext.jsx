@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { apiFetch } from "../utils/api";
+import { apiFetch, getActiveUser } from "../utils/api";
+
+
 
 const AuthContext = createContext();
 
@@ -39,27 +41,16 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: "Błąd logowania" };
       }
 
-      // 2) sprawdzenie aktywności / zatwierdzenia
-      //    /GetActive/{userId} → 200 (zatwierdzony, zwraca usera), 404 (niezatwierdzony)
-      let isApproved = false;
-      try {
-        // UWAGA: zgodnie z Twoim Swaggerem endpoint jest bez prefiksu /api
-        await apiFetch(`/GetActive/${userId}`, { method: "GET" });
-        isApproved = true; // skoro 200, to aktywny
-      } catch (err) {
-        // 404 → niezatwierdzone konto
-        // apiFetch w razie 4xx/5xx rzuca wyjątek – traktujemy to jako brak akceptacji
-        isApproved = false;
-      }
 
-      if (!isApproved) {
-        // TWARDY BRAK LOGOWANIA: nie zapisujemy tokenów ani currentUser
-        return {
-          success: false,
-          error:
-            "Twoje konto nie zostało jeszcze zatwierdzone przez organizatora.",
-        };
-      }
+        // const result = await getActiveUser(userId);
+
+        // if (!result.success) {
+        //   return {
+        //     success: false,
+        //     error: result.error,
+        //   };
+        // }
+
 
       // 3) zapis tokenów i użytkownika DOPIERO po pozytywnym sprawdzeniu
       setAccessToken(res.accessToken);
