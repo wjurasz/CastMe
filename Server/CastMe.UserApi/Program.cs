@@ -85,11 +85,13 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        policy.WithOrigins("http://localhost:5173") // port Vite
+        policy.WithOrigins("http://localhost:5173",
+            "https://castme-pl.azurewebsites.net") // port Vite
               .AllowAnyHeader()
               .AllowAnyMethod();
     });
-});
+}); 
+
 
 // Opcje SMTP
 builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SMTP"));
@@ -174,16 +176,11 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-//var port = Environment.GetEnvironmentVariable("PORT");
-//if (string.IsNullOrEmpty(port))
-//    {
-//        port = "8080"; // fallback for local development
-//    }
-//builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
-
-
 
 var app = builder.Build();
+
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+app.Urls.Add($"http://0.0.0.0:{port}");
 
 app.UseForwardedHeaders();
 
@@ -226,11 +223,7 @@ if (app.Environment.IsDevelopment())
 app.UseStaticFiles();
 app.UseRouting();
 
-app.UseCors(builder => builder
-    .WithOrigins("http://localhost:5173")
-    .AllowAnyMethod()
-    .AllowAnyHeader()
-    .AllowCredentials());
+app.UseCors();
 
 app.UseAuthentication();   // WAŻNE: przed UseAuthorization
 app.UseAuthorization();
